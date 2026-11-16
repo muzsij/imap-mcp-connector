@@ -1,9 +1,9 @@
 import type { ImapFlow } from 'imapflow';
-import { extractText, getDocumentProxy } from 'unpdf';
 import { MailError } from '../errors.js';
 import { htmlToText, truncateUtf8 } from '../format.js';
 import { resolveFolder } from './folders.js';
 import { downloadPart, scanStructure } from './message.js';
+import { extractPdfText, PdfTimeoutError } from './pdf.js';
 
 export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 
@@ -24,16 +24,6 @@ function textKind(contentType: string, filename: string): TextKind | null {
   if (type.startsWith('text/') || ['application/json', 'application/xml', 'application/csv'].includes(type)) return 'text';
   if (type === 'application/pdf' || filename.toLowerCase().endsWith('.pdf')) return 'pdf';
   return null;
-}
-
-async function pdfText(buf: Buffer): Promise<string> {
-  const pdf = await getDocumentProxy(new Uint8Array(buf));
-  try {
-    const { text } = await extractText(pdf, { mergePages: true });
-    return text;
-  } finally {
-    await pdf.loadingTask.destroy();
-  }
 }
 
 /** Decodes bytes with the declared charset, falling back to UTF-8 for missing or unsupported labels. */
@@ -67,11 +57,16 @@ export async function getAttachment(
 
     const { data, charset } = await downloadPart(client, uid, partId, MAX_ATTACHMENT_BYTES);
     let raw: string;
+    let note: string | undefined;
     if (kind === 'pdf') {
       try {
-        raw = await pdfText(data);
-      } catch {
-        return { ...base, text: null, truncated: false, note: 'PDF could not be read (corrupt or password-protected).' };
+        const pdf = await extractPdfText(data);
+        raw = pdf.text;
+        if (pdf.pagesRead < pdf.totalPages) note = `Only the first ${pdf.pagesRead} of ${pdf.totalPages} pages were read.`;
+      } catch (err) {
+        const reason =
+          err instanceof PdfTimeoutError ? 'took too long to read' : 'could not be read (corrupt or password-protected)';
+        return { ...base, text: null, truncated: false, note: `PDF ${reason}.` };
       }
     } else {
       // Use the charset imapflow reports for the downloaded bytes, not the declared one: imapflow has already
@@ -80,7 +75,7 @@ export async function getAttachment(
       raw = kind === 'html' ? htmlToText(decoded) : decoded;
     }
     const { text, truncated } = truncateUtf8(raw);
-    return { ...base, text, truncated };
+    return { ...base, text, truncated, ...(note ? { note } : {}) };
   } finally {
     lock.release();
   }

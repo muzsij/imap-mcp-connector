@@ -18,7 +18,7 @@ Minor findings from per-task and final code reviews that were consciously deferr
 - **Task 4** — SRV targets not tied to email domain; ISPDB body unbounded/redirects followed; trailing-dot domains miss presets; untested SRV branches
 - **Task 4** — port test covers only empty port (not NaN/>65535); %EMAILDOMAIN% replace() replaces first occurrence only (fails safe)
 - **Task 5** — IPv4-compatible IPv6 (::7f00:1) classified unicast — reject ::/96
-- **Task 5** — SMTP host not checked against allowlist (only private-address check) — spec allowlists email domain / IMAP host only
+- ~~**Task 5** — SMTP host not checked against allowlist~~ — resolved: `ALLOWED_SMTP_HOSTS`, checked when SMTP settings are saved and before every send
 - **Task 5** — no timeout on dns.lookup; lookup error cause swallowed; "could not resolve" vs "private" messages form a small internal-DNS oracle; thin guard tests
 - **Task 6** — snippet can split surrogate pairs; truncateUtf8 strips a genuine U+FFFD at the cut; formatAddress doesn't quote names (don't reuse for outgoing headers); toMailError never yields PERMISSION_DENIED/RATE_LIMITED/TOO_LARGE/INVALID_INPUT (callers throw them)
 - **Task 7** — queued ops use stale user.needsReauth snapshot (extra failed logins after AUTH_FAILED); no test for 'error' event / guarded discard; logout() in close/closeAll unbounded; closeAll misses in-flight connect; idle test timing-based
@@ -45,7 +45,7 @@ Minor findings from per-task and final code reviews that were consciously deferr
 
 - Request id not included in MCP tool error logs/results
 - get_thread has no total output size cap (up to 50 × 50 KB)
-- PDF extraction runs on the main thread (a crafted PDF can block the event loop)
+- ~~PDF extraction runs on the main thread (a crafted PDF can block the event loop)~~ — resolved: extraction runs in a worker thread with a timeout, page/character caps, a heap limit and at most 2 concurrent workers (`src/mail/ops/pdf.ts`)
 - No grace window for refresh-token retries (a lost refresh response revokes the grant)
 - Outlook/Microsoft 365 users get a generic 'wrong password' error instead of 'not supported yet'
 - No copy button next to the connector URL
