@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  GuardError, guardMailSettings, guardStoredUser, isAllowed, isListedImapHost, isPublicAddress, isTrustedServer,
+  GuardError, guardMailSettings, guardStoredUser, guardStoredUserForSmtp, isAllowed, isListedImapHost, isPublicAddress,
+  isSmtpHostAllowed, isTrustedServer,
 } from '../../src/guard.js';
 import { createTestUser, testDb } from '../helpers/db.js';
 import type { MailServerSettings } from '../../src/types.js';
@@ -151,5 +152,36 @@ describe('guardStoredUser', () => {
     await expect(guardStoredUser(testConfig(), user, publicLookup)).resolves.not.toThrow();
     const c = testConfig({ ALLOWED_IMAP_HOSTS: 'imap.gmail.com' });
     await expect(guardStoredUser(c, user, publicLookup)).rejects.toThrow(/not allowed/);
+  });
+});
+
+describe('isSmtpHostAllowed', () => {
+  it('does not restrict when ALLOWED_SMTP_HOSTS is unset or *', () => {
+    expect(isSmtpHostAllowed(testConfig(), 'smtp.anything.net')).toBe(true);
+    expect(isSmtpHostAllowed(testConfig({ ALLOWED_SMTP_HOSTS: '*' }), 'smtp.anything.net')).toBe(true);
+  });
+
+  it('allows only listed hosts, case-insensitively', () => {
+    const c = testConfig({ ALLOWED_SMTP_HOSTS: 'smtp.gmail.com, mail.example.com' });
+    expect(isSmtpHostAllowed(c, 'SMTP.gmail.com')).toBe(true);
+    expect(isSmtpHostAllowed(c, 'mail.example.com')).toBe(true);
+    expect(isSmtpHostAllowed(c, 'smtp.attacker.net')).toBe(false);
+  });
+});
+
+describe('guardStoredUserForSmtp', () => {
+  it('refuses an SMTP connection to a server not in ALLOWED_SMTP_HOSTS, while IMAP access stays allowed', async () => {
+    const user = createTestUser(testDb(), { email: 'a@example.com', settingsSource: 'discovered', smtpHost: 'smtp.attacker.net' });
+    const c = testConfig({ ALLOWED_SMTP_HOSTS: 'smtp.example.com' });
+    await expect(guardStoredUserForSmtp(c, user, publicLookup)).rejects.toThrow(/ALLOWED_SMTP_HOSTS/);
+    await expect(guardStoredUser(c, user, publicLookup)).resolves.toBeDefined();
+  });
+
+  it('passes for a listed SMTP server and still applies the stored-account checks', async () => {
+    const user = createTestUser(testDb(), { email: 'a@example.com', settingsSource: 'discovered', smtpHost: 'smtp.example.com' });
+    const c = testConfig({ ALLOWED_SMTP_HOSTS: 'smtp.example.com' });
+    await expect(guardStoredUserForSmtp(c, user, publicLookup)).resolves.toBeDefined();
+    const private_ = async () => [{ address: '10.0.0.1' }];
+    await expect(guardStoredUserForSmtp(c, user, private_)).rejects.toThrow(GuardError);
   });
 });

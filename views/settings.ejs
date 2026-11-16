@@ -5,6 +5,7 @@
 </header>
 <p class="muted">Signed in as <strong><%= user.email %></strong></p>
 <% if (user.needsReauth) { %><p class="banner" role="alert">Your mail password stopped working. <a href="/login">Sign in again</a> with your current password or app password.</p><% } %>
+<% if (smtpBlocked) { %><p class="banner" role="alert">Your outgoing mail server (<%= user.smtpHost %>) is not allowed on this instance, so sending is disabled. Choose an allowed SMTP server below.</p><% } %>
 <% if (welcome) { %><p class="ok">Your account is ready. Connect it to Claude or ChatGPT below.</p><% } %>
 <% if (saved) { %><p class="ok">Saved.</p><% } %>
 <% if (error) { %><p class="error" role="alert"><%= error %></p><% } %>
@@ -47,6 +48,7 @@
   <form method="post" action="/settings/smtp">
     <input type="hidden" name="_csrf" value="<%= csrf %>">
     <label for="smtp_host">SMTP server</label>
+    <% if (allowedSmtpHosts.length) { %><p class="muted">Allowed SMTP servers: <%= allowedSmtpHosts.join(', ') %></p><% } %>
     <div class="row">
       <input id="smtp_host" name="smtp_host" required value="<%= user.smtpHost %>">
       <input name="smtp_port" type="number" aria-label="SMTP port" required value="<%= user.smtpPort %>">

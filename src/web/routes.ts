@@ -6,7 +6,7 @@ import { mcpUrl } from '../config.js';
 import { encryptSecret } from '../crypto.js';
 import { listActiveGrants, revokeUserGrant } from '../db/oauth.js';
 import { deleteUser, serverSettingsOf, setPermissionLevel, updateSmtpSettings, type User } from '../db/users.js';
-import { GuardError } from '../guard.js';
+import { assertSmtpHostAllowed, GuardError, isSmtpHostAllowed } from '../guard.js';
 import { log } from '../log.js';
 import type { MailServerSettings, PermissionLevel, Security } from '../types.js';
 import { csrfToken, verifyCsrf } from './csrf.js';
@@ -68,6 +68,8 @@ function renderSettings(deps: AppDeps, req: Request, res: Response, error: strin
     levels: LEVELS,
     saved: typeof req.query.saved === 'string' ? req.query.saved : null,
     welcome: req.query.welcome === '1',
+    smtpBlocked: !isSmtpHostAllowed(deps.config, user.smtpHost),
+    allowedSmtpHosts: deps.config.allowedSmtpHosts.filter((h) => h !== '*'),
     error,
   });
 }
@@ -137,6 +139,7 @@ export function webRouter(deps: AppDeps): Router {
     }
     const smtp = { smtpHost: b.smtp_host.trim(), smtpPort, smtpSecurity: b.smtp_security };
     try {
+      assertSmtpHostAllowed(deps.config, smtp.smtpHost);
       await deps.guard(user.email, { ...serverSettingsOf(user), ...smtp });
     } catch (err) {
       if (err instanceof GuardError) return renderSettings(deps, req, res, err.message, 400);

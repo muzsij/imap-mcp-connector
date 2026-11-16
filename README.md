@@ -54,12 +54,15 @@ Lost it? Create a new one and sign in again. The stored password is replaced.
 | `SESSION_SECRET` | yes | ≥ 32 characters, signs session cookies. |
 | `ALLOWED_EMAIL_DOMAINS` | at least one of these | Comma-separated email domains allowed to sign in. |
 | `ALLOWED_IMAP_HOSTS` | at least one of these | Comma-separated IMAP hosts allowed; `*` allows any public server that auto-discovery finds. Hand-entered servers must be listed by name. |
+| `ALLOWED_SMTP_HOSTS` | no (unrestricted) | Comma-separated SMTP hosts that may receive a user's SMTP password; `*` allows any public server. Recommended whenever `ALLOWED_IMAP_HOSTS` is set. |
 | `ALLOW_PRIVATE_HOSTS` | no (`false`) | Allow mail servers on private networks and unencrypted connections. |
 | `DEFAULT_SEND_LIMIT_PER_HOUR` | no (`20`) | Emails each user's AI may send per hour. |
 | `DATA_DIR` | no (`/data`) | Where the SQLite database lives. |
 | `PORT` | no (`3000`) | Listen port. |
 
 When both allowlists are set, a sign-in must pass **both**: the email domain must be in `ALLOWED_EMAIL_DOMAINS` **and** the IMAP host must be in `ALLOWED_IMAP_HOSTS` (unless it is `*`). A list that is not set does not restrict, so `ALLOWED_EMAIL_DOMAINS` alone allows any public mail server for those domains. The check runs at sign-in, when SMTP settings change, and again before each new mail connection.
+
+`ALLOWED_SMTP_HOSTS` restricts outgoing servers separately: when it lists hosts, users can only save an SMTP server from that list, and every send checks it again before the SMTP password leaves the server. A stored SMTP server that is not on the list (for example a discovered one, or one saved before the list was set) does not block sign-in or reading mail; sending is refused and the settings page asks the user to pick an allowed server.
 
 Server settings are auto-discovered on first sign-in (built-in presets, the Thunderbird ISPDB, then DNS SRV records), and the first successful sign-in pins the server for that address. Settings typed into the sign-in form are accepted only when discovery definitively finds nothing **and** the IMAP host is listed by name in `ALLOWED_IMAP_HOSTS` (`*` does not count). Otherwise, whoever signed in first with an address could point it at a server they control and capture the real owner's password at the owner's first sign-in. If the automatic lookup fails temporarily (for example the ISPDB or DNS is unreachable), sign-in is refused with a request to try again. Most company domains publish no discoverable settings, including Google Workspace and Microsoft-hosted ones, so for those domains list their IMAP server, e.g. `ALLOWED_IMAP_HOSTS=imap.gmail.com` or `ALLOWED_IMAP_HOSTS=mail.example.com`.
 

@@ -4,6 +4,8 @@ export interface Config {
   sessionSecret: string;
   allowedEmailDomains: string[];
   allowedImapHosts: string[];
+  /** Outgoing servers that may receive a user's SMTP password; empty does not restrict, '*' allows any public host. */
+  allowedSmtpHosts: string[];
   allowPrivateHosts: boolean;
   defaultSendLimitPerHour: number;
   dataDir: string;
@@ -69,6 +71,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sessionSecret: env.SESSION_SECRET,
     allowedEmailDomains,
     allowedImapHosts,
+    allowedSmtpHosts: list(env.ALLOWED_SMTP_HOSTS),
     allowPrivateHosts: env.ALLOW_PRIVATE_HOSTS === 'true',
     defaultSendLimitPerHour: positiveInt('DEFAULT_SEND_LIMIT_PER_HOUR', env.DEFAULT_SEND_LIMIT_PER_HOUR, 20),
     dataDir: env.DATA_DIR || '/data',

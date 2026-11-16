@@ -7,7 +7,7 @@ import { openDb } from './db/index.js';
 import type { User } from './db/users.js';
 import { purgeExpired } from './db/purge.js';
 import { discoverSettings } from './discovery/index.js';
-import { guardMailSettings, guardStoredUser } from './guard.js';
+import { guardMailSettings, guardStoredUser, guardStoredUserForSmtp } from './guard.js';
 import { log } from './log.js';
 import { verifyImapLogin } from './mail/imap.js';
 import { MailPool } from './mail/pool.js';
@@ -29,8 +29,9 @@ const config = loadConfigOrExit();
 mkdirSync(config.dataDir, { recursive: true });
 const db = openDb(path.join(config.dataDir, 'imap-connector.db'));
 // Re-check stored settings on every new connection, so allowlist or DNS changes apply to existing users.
-const mailGuard = (u: User) => guardStoredUser(config, u);
-const pool = new MailPool({ db, key: config.encryptionKey, signInUrl: signInUrl(config), guard: mailGuard });
+const imapGuard = (u: User) => guardStoredUser(config, u);
+const smtpGuard = (u: User) => guardStoredUserForSmtp(config, u);
+const pool = new MailPool({ db, key: config.encryptionKey, signInUrl: signInUrl(config), guard: imapGuard });
 
 const app = createApp({
   config,
@@ -41,7 +42,7 @@ const app = createApp({
   discover: (email) => discoverSettings(email),
   verifyImap: (target, password) => verifyImapLogin(target, password),
   guard: (email, settings) => guardMailSettings(config, email, settings),
-  mailGuard,
+  mailGuard: smtpGuard,
 });
 
 purgeExpired(db, Date.now());

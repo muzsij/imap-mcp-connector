@@ -26,7 +26,7 @@ export interface AppDeps {
   discover: LoginDeps['discover'];
   verifyImap: LoginDeps['verifyImap'];
   guard: LoginDeps['guard'];
-  /** Re-checks a stored user's mail settings before SMTP connections (IMAP is guarded by the pool). */
+  /** Re-checks a stored user's mail settings and ALLOWED_SMTP_HOSTS before SMTP connections (IMAP is guarded by the pool). */
   mailGuard?: (user: User) => Promise<PinnedAddresses | void>;
 }
 

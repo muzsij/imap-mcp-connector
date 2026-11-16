@@ -9,6 +9,7 @@ describe('loadConfig', () => {
     expect(c.encryptionKey.equals(TEST_KEY)).toBe(true);
     expect(c.allowedImapHosts).toEqual(['*']);
     expect(c.allowedEmailDomains).toEqual([]);
+    expect(c.allowedSmtpHosts).toEqual([]);
     expect(c.allowPrivateHosts).toBe(false);
     expect(c.defaultSendLimitPerHour).toBe(20);
     expect(c.dataDir).toBe('/data');
@@ -19,6 +20,7 @@ describe('loadConfig', () => {
   it('parses comma lists, lowercases and trims them', () => {
     const c = loadConfig(testEnv({ ALLOWED_IMAP_HOSTS: undefined, ALLOWED_EMAIL_DOMAINS: ' Example.com, b.org ,' }));
     expect(c.allowedEmailDomains).toEqual(['example.com', 'b.org']);
+    expect(loadConfig(testEnv({ ALLOWED_SMTP_HOSTS: ' SMTP.gmail.com, smtp.x.org ' })).allowedSmtpHosts).toEqual(['smtp.gmail.com', 'smtp.x.org']);
   });
 
   it('requires PUBLIC_URL', () => {

@@ -34,6 +34,23 @@ export function isListedImapHost(config: Config, imapHost: string): boolean {
 }
 
 /**
+ * True when ALLOWED_SMTP_HOSTS permits this outgoing server. An empty list does not restrict and "*" allows any
+ * (public) host; otherwise the host must be listed by name.
+ */
+export function isSmtpHostAllowed(config: Config, smtpHost: string): boolean {
+  const hosts = config.allowedSmtpHosts;
+  return hosts.length === 0 || hosts.includes('*') || hosts.includes(smtpHost.toLowerCase());
+}
+
+export function assertSmtpHostAllowed(config: Config, smtpHost: string): void {
+  if (!isSmtpHostAllowed(config, smtpHost)) {
+    throw new GuardError(
+      `The outgoing mail server ${smtpHost} is not allowed on this instance (ALLOWED_SMTP_HOSTS). Choose an allowed SMTP server in settings or ask the administrator.`,
+    );
+  }
+}
+
+/**
  * Whether an account's stored IMAP server may receive the account owner's password. Discovered settings come from
  * the domain itself. Hand-entered ones are trusted only for servers the administrator listed by name: otherwise
  * whoever signs in first with an address decides where its real owner's password is sent. Legacy accounts (created
@@ -106,4 +123,14 @@ export async function guardStoredUser(config: Config, user: User, lookup: Lookup
     throw new GuardError("This account's mail server is not approved on this instance. Ask the user to sign in again.");
   }
   return guardMailSettings(config, user.email, serverSettingsOf(user), lookup);
+}
+
+/**
+ * Checks a stored account right before an SMTP connection: guardStoredUser plus ALLOWED_SMTP_HOSTS, so the SMTP
+ * password is only ever sent to an allowed outgoing server. IMAP access does not depend on the SMTP allowlist, so a
+ * user whose stored SMTP server is not allowed can still read mail and fix the setting.
+ */
+export async function guardStoredUserForSmtp(config: Config, user: User, lookup: LookupAll = defaultLookup): Promise<PinnedAddresses> {
+  assertSmtpHostAllowed(config, user.smtpHost);
+  return guardStoredUser(config, user, lookup);
 }

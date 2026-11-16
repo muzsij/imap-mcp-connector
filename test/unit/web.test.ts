@@ -122,6 +122,25 @@ describe('web', () => {
     expect(findUserByEmail(deps.db, 'alice@x.org')?.smtpPasswordEnc).toBeNull();
   });
 
+  it('rejects SMTP servers outside ALLOWED_SMTP_HOSTS and warns about a stored one', async () => {
+    const { app, deps } = testApp({}, { ALLOWED_SMTP_HOSTS: 'smtp.allowed.org' });
+    const agent = request.agent(app);
+    await signIn(agent);
+    // The discovered smtp.x.org is stored, but it is not allowed, so the settings page warns and lists the allowed ones.
+    const page = await agent.get('/settings');
+    expect(page.text).toContain('is not allowed on this instance');
+    expect(page.text).toContain('Allowed SMTP servers: smtp.allowed.org');
+    const csrf = csrfFrom(page.text);
+    const form = { _csrf: csrf, smtp_host: 'smtp.attacker.net', smtp_port: '465', smtp_security: 'tls', smtp_username: 'alice', use_imap_password: 'on' };
+    const bad = await agent.post('/settings/smtp').type('form').send(form);
+    expect(bad.status).toBe(400);
+    expect(bad.text).toContain('ALLOWED_SMTP_HOSTS');
+    expect(findUserByEmail(deps.db, 'alice@x.org')?.smtpHost).toBe('smtp.x.org');
+    const ok = await agent.post('/settings/smtp').type('form').send({ ...form, smtp_host: 'SMTP.allowed.org' });
+    expect(ok.headers.location).toBe('/settings?saved=smtp');
+    expect((await agent.get('/settings')).text).not.toContain('is not allowed on this instance');
+  });
+
   it('lists connected apps and revokes them', async () => {
     const { app, deps } = testApp();
     const agent = request.agent(app);
