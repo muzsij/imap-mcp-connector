@@ -6,7 +6,7 @@ import { ConfigError, loadConfig, signInUrl, type Config } from './config.js';
 import { openDb } from './db/index.js';
 import type { User } from './db/users.js';
 import { purgeExpired } from './db/purge.js';
-import { discoverSettings } from './discovery/index.js';
+import { createDiscoveryDeps, discoverSettings } from './discovery/index.js';
 import { guardMailSettings, guardStoredUser, guardStoredUserForSmtp } from './guard.js';
 import { log } from './log.js';
 import { verifyImapLogin } from './mail/imap.js';
@@ -31,6 +31,7 @@ const db = openDb(path.join(config.dataDir, 'imap-connector.db'));
 // Re-check stored settings on every new connection, so allowlist or DNS changes apply to existing users.
 const imapGuard = (u: User) => guardStoredUser(config, u);
 const smtpGuard = (u: User) => guardStoredUserForSmtp(config, u);
+const discoveryDeps = createDiscoveryDeps({ allowPrivateHosts: config.allowPrivateHosts });
 const pool = new MailPool({ db, key: config.encryptionKey, signInUrl: signInUrl(config), guard: imapGuard });
 
 const app = createApp({
@@ -39,7 +40,7 @@ const app = createApp({
   pool,
   provider: new SqliteOAuthProvider(db),
   smtpFactory: defaultSmtpFactory,
-  discover: (email) => discoverSettings(email),
+  discover: (email) => discoverSettings(email, discoveryDeps),
   verifyImap: (target, password) => verifyImapLogin(target, password),
   guard: (email, settings) => guardMailSettings(config, email, settings),
   mailGuard: smtpGuard,

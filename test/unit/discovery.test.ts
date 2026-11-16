@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DiscoveryUnavailableError, discoverSettings, type DiscoveryDeps } from '../../src/discovery/index.js';
+import { fetchDomainAutoconfig, type FetchConfig } from '../../src/discovery/autoconfig.js';
 import { fetchIspdb, parseIspdb } from '../../src/discovery/ispdb.js';
 import { resolveSrvSettings } from '../../src/discovery/srv.js';
 
@@ -203,8 +204,10 @@ describe('resolveSrvSettings', () => {
 });
 
 describe('discoverSettings', () => {
-  const none: DiscoveryDeps = { ispdb: async () => ({ status: 'not_found' }), srv: async () => ({ status: 'not_found' }) };
-  const failing: DiscoveryDeps = { ispdb: async () => ({ status: 'error' }), srv: async () => ({ status: 'error' }) };
+  const none: DiscoveryDeps = {
+    autoconfig: async () => ({ status: 'not_found' }), ispdb: async () => ({ status: 'not_found' }), srv: async () => ({ status: 'not_found' }),
+  };
+  const failing: DiscoveryDeps = { ...none, ispdb: async () => ({ status: 'error' }), srv: async () => ({ status: 'error' }) };
   const hit = { imapHost: 'i', imapPort: 993, imapSecurity: 'tls', smtpHost: 's', smtpPort: 465, smtpSecurity: 'tls', autoSavesSent: false } as const;
 
   it('uses presets first (gmail auto-saves sent mail)', async () => {
@@ -215,6 +218,14 @@ describe('discoverSettings', () => {
   it('uses presets even when the other sources are failing', async () => {
     const ispdb = vi.fn(failing.ispdb);
     expect(await discoverSettings('a@gmail.com', { ...failing, ispdb })).toMatchObject({ imapHost: 'imap.gmail.com' });
+    expect(ispdb).not.toHaveBeenCalled();
+  });
+
+  it("prefers the domain's own autoconfig file over ISPDB and SRV", async () => {
+    const autoconfig = vi.fn(async () => ({ status: 'found', settings: hit }) as const);
+    const ispdb = vi.fn(none.ispdb);
+    expect(await discoverSettings('Me@X.org', { ...none, autoconfig, ispdb })).toEqual(hit);
+    expect(autoconfig).toHaveBeenCalledWith('Me@X.org', 'x.org');
     expect(ispdb).not.toHaveBeenCalled();
   });
 
@@ -239,8 +250,8 @@ describe('discoverSettings', () => {
   });
 
   it('returns settings when one source fails but another finds them', async () => {
-    expect(await discoverSettings('a@x.org', { ispdb: async () => ({ status: 'error' }), srv: async () => ({ status: 'found', settings: hit }) })).toEqual(hit);
-    expect(await discoverSettings('a@x.org', { ispdb: async () => { throw new Error('x'); }, srv: async () => ({ status: 'found', settings: hit }) })).toEqual(hit);
+    expect(await discoverSettings('a@x.org', { ...none, ispdb: async () => ({ status: 'error' }), srv: async () => ({ status: 'found', settings: hit }) })).toEqual(hit);
+    expect(await discoverSettings('a@x.org', { ...none, ispdb: async () => { throw new Error('x'); }, srv: async () => ({ status: 'found', settings: hit }) })).toEqual(hit);
   });
 
   it('covers borrowed presets such as GMX and Posteo', async () => {
@@ -258,5 +269,56 @@ describe('discoverSettings', () => {
     if (result1) result1.imapHost = 'mutated.example.org';
     const result2 = await discoverSettings('Someone@Gmail.com', none);
     expect(result2?.imapHost).toBe('imap.gmail.com');
+  });
+});
+
+describe('fetchDomainAutoconfig', () => {
+  const publicLookup = vi.fn(async () => [{ address: '195.201.81.10' }]);
+  const served = (pages: Record<string, string>) =>
+    vi.fn<FetchConfig>(async (url) => pages[url.origin + url.pathname] ?? null);
+  const AUTOCONFIG = 'https://autoconfig.example.org/mail/config-v1.1.xml';
+  const WELL_KNOWN = 'https://example.org/.well-known/autoconfig/mail/config-v1.1.xml';
+
+  it('reads autoconfig.<domain> over HTTPS, passing the address and connecting to the vetted IP', async () => {
+    const fetchConfig = served({ [AUTOCONFIG]: ISPDB_XML });
+    const result = await fetchDomainAutoconfig('me@example.org', 'example.org', { lookup: publicLookup, fetchConfig });
+    expect(result).toMatchObject({ status: 'found', settings: { imapHost: 'imap.example.org', imapPort: 993 } });
+    const [url, address] = fetchConfig.mock.calls[0];
+    expect(url.href).toBe(`${AUTOCONFIG}?emailaddress=me%40example.org`);
+    expect(address).toBe('195.201.81.10');
+  });
+
+  it('falls back to the .well-known file on the domain', async () => {
+    const fetchConfig = served({ [WELL_KNOWN]: ISPDB_XML });
+    expect(await fetchDomainAutoconfig('me@example.org', 'example.org', { lookup: publicLookup, fetchConfig })).toMatchObject({ status: 'found' });
+    expect(fetchConfig).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports not-found (never an error) for missing files, HTML pages, unusable configs and failures', async () => {
+    const opts = (fetchConfig: (url: URL) => Promise<string | null>) => ({ lookup: publicLookup, fetchConfig });
+    expect(await fetchDomainAutoconfig('a@x.org', 'x.org', opts(async () => null))).toEqual({ status: 'not_found' });
+    expect(await fetchDomainAutoconfig('a@x.org', 'x.org', opts(async () => '<html><body>404</body></html>'))).toEqual({ status: 'not_found' });
+    expect(await fetchDomainAutoconfig('a@x.org', 'x.org', opts(async () => ISPDB_XML.replace(/SSL|STARTTLS/g, 'plain')))).toEqual({ status: 'not_found' });
+    expect(await fetchDomainAutoconfig('a@x.org', 'x.org', opts(async () => { throw new Error('boom'); }))).toEqual({ status: 'not_found' });
+    const unresolvable = async () => { throw dnsError('ENOTFOUND'); };
+    expect(await fetchDomainAutoconfig('a@x.org', 'x.org', { lookup: unresolvable, fetchConfig: async () => ISPDB_XML })).toEqual({ status: 'not_found' });
+  });
+
+  it('does not contact hosts that resolve to private addresses', async () => {
+    const fetchConfig = vi.fn(async () => ISPDB_XML);
+    for (const address of ['127.0.0.1', '10.0.0.5', '::1', '169.254.169.254']) {
+      const lookup = async () => [{ address: '195.201.81.10' }, { address }];
+      expect(await fetchDomainAutoconfig('a@x.org', 'x.org', { lookup, fetchConfig })).toEqual({ status: 'not_found' });
+    }
+    expect(fetchConfig).not.toHaveBeenCalled();
+  });
+
+  it('skips the address check when private hosts are allowed', async () => {
+    const lookup = vi.fn(async () => [{ address: '10.0.0.5' }]);
+    const fetchConfig = vi.fn(async () => ISPDB_XML);
+    const result = await fetchDomainAutoconfig('a@x.org', 'x.org', { allowPrivateHosts: true, lookup, fetchConfig });
+    expect(result).toMatchObject({ status: 'found' });
+    expect(lookup).not.toHaveBeenCalled();
+    expect(fetchConfig).toHaveBeenCalledWith(expect.any(URL), undefined);
   });
 });

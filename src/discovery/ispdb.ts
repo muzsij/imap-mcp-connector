@@ -64,7 +64,7 @@ export function parseIspdb(xml: string, domain?: string): MailServerSettings | n
 }
 
 /** True when the body is well-formed XML with a clientConfig root, i.e. a real ISPDB answer rather than an error page. */
-function isClientConfig(xml: string): boolean {
+export function isClientConfig(xml: string): boolean {
   try {
     return XMLValidator.validate(xml) === true && new XMLParser().parse(xml)?.clientConfig !== undefined;
   } catch {
