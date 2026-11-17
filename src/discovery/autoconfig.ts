@@ -80,7 +80,7 @@ async function vet(host: string, lookup: LookupAll): Promise<string | null> {
 }
 
 /**
- * Looks for the configuration file the mail domain publishes itself, the way Thunderbird does:
+ * Looks for the configuration file a domain (the mail domain, or its mail provider's) publishes itself, the way Thunderbird does:
  * https://autoconfig.<domain>/mail/config-v1.1.xml, then https://<domain>/.well-known/autoconfig/mail/config-v1.1.xml.
  * HTTPS only, so the settings provably come from the domain's owner.
  *
@@ -93,6 +93,8 @@ export async function fetchDomainAutoconfig(
   domain: string,
   { allowPrivateHosts = false, lookup = defaultLookup, fetchConfig = httpsFetchConfig }: AutoconfigOptions = {},
 ): Promise<DiscoveryResult> {
+  // %EMAILDOMAIN% in the file means the user's domain, which differs from `domain` when that is the mail provider's.
+  const emailDomain = email.slice(email.lastIndexOf('@') + 1).toLowerCase();
   const urls = [
     new URL(`https://autoconfig.${domain}/mail/config-v1.1.xml?emailaddress=${encodeURIComponent(email)}`),
     new URL(`https://${domain}/.well-known/autoconfig/mail/config-v1.1.xml`),
@@ -111,7 +113,7 @@ export async function fetchDomainAutoconfig(
       continue;
     }
     if (!body || !isClientConfig(body)) continue;
-    const settings = parseIspdb(body, domain);
+    const settings = parseIspdb(body, emailDomain);
     if (settings) return { status: 'found', settings };
   }
   return { status: 'not_found' };

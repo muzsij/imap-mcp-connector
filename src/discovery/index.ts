@@ -1,6 +1,7 @@
 import type { DiscoveryResult, MailServerSettings } from '../types.js';
 import { fetchDomainAutoconfig } from './autoconfig.js';
 import { fetchIspdb } from './ispdb.js';
+import { mxProviderDomain } from './mx.js';
 import { PRESETS } from './presets.js';
 import { resolveSrvSettings } from './srv.js';
 
@@ -9,6 +10,8 @@ export interface DiscoveryDeps {
   autoconfig(email: string, domain: string): Promise<DiscoveryResult>;
   ispdb(domain: string): Promise<DiscoveryResult>;
   srv(domain: string): Promise<DiscoveryResult>;
+  /** The settings the domain's mail provider (from its MX record) publishes, for domains that publish none. */
+  mx(email: string, domain: string): Promise<DiscoveryResult>;
 }
 
 /** A lookup failed (timeout, outage, DNS error), so we cannot tell whether the domain publishes settings. */
@@ -24,6 +27,12 @@ export function createDiscoveryDeps(options: { allowPrivateHosts?: boolean } = {
     autoconfig: (email, domain) => fetchDomainAutoconfig(email, domain, options),
     ispdb: (d) => fetchIspdb(d),
     srv: (d) => resolveSrvSettings(d),
+    mx: async (email, domain) => {
+      const provider = await mxProviderDomain(domain);
+      if (provider.status !== 'found') return provider;
+      const own = await fetchDomainAutoconfig(email, provider.domain, options);
+      return own.status === 'found' ? own : fetchIspdb(provider.domain, fetch, domain);
+    },
   };
 }
 
@@ -45,7 +54,7 @@ export async function discoverSettings(
   if (Object.hasOwn(PRESETS, domain)) return { ...PRESETS[domain] };
   let failed = false;
   // The domain's own file first, as Thunderbird does: it is authoritative and the ISPDB lacks most small domains.
-  const lookups = [(d: string) => deps.autoconfig(email, d), deps.ispdb, deps.srv];
+  const lookups = [(d: string) => deps.autoconfig(email, d), deps.ispdb, deps.srv, (d: string) => deps.mx(email, d)];
   for (const lookup of lookups) {
     let result: DiscoveryResult;
     try {

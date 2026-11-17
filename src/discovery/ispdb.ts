@@ -72,7 +72,8 @@ export function isClientConfig(xml: string): boolean {
   }
 }
 
-export async function fetchIspdb(domain: string, fetchFn: typeof fetch = fetch): Promise<DiscoveryResult> {
+/** Looks the domain up in the Thunderbird ISPDB; `emailDomain` (the user's domain) replaces %EMAILDOMAIN%. */
+export async function fetchIspdb(domain: string, fetchFn: typeof fetch = fetch, emailDomain = domain): Promise<DiscoveryResult> {
   try {
     const res = await fetchFn(`https://autoconfig.thunderbird.net/v1.1/${encodeURIComponent(domain)}`, {
       signal: AbortSignal.timeout(5000),
@@ -82,7 +83,7 @@ export async function fetchIspdb(domain: string, fetchFn: typeof fetch = fetch):
     if (!res.ok) return { status: 'error' };
     const body = await res.text();
     if (!isClientConfig(body)) return { status: 'error' };
-    const settings = parseIspdb(body, domain);
+    const settings = parseIspdb(body, emailDomain);
     return settings ? { status: 'found', settings } : { status: 'not_found' };
   } catch {
     return { status: 'error' };

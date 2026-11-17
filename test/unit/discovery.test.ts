@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DiscoveryUnavailableError, discoverSettings, type DiscoveryDeps } from '../../src/discovery/index.js';
 import { fetchDomainAutoconfig, type FetchConfig } from '../../src/discovery/autoconfig.js';
 import { fetchIspdb, parseIspdb } from '../../src/discovery/ispdb.js';
+import { mxProviderDomain } from '../../src/discovery/mx.js';
 import { resolveSrvSettings } from '../../src/discovery/srv.js';
 
 const ISPDB_XML = `<?xml version="1.0"?>
@@ -124,6 +125,12 @@ describe('fetchIspdb', () => {
     expect(fetchFn).toHaveBeenCalledWith('https://autoconfig.thunderbird.net/v1.1/example.org', expect.anything());
   });
 
+  it("fills %EMAILDOMAIN% with the user's domain when looking up a provider", async () => {
+    const xml = ISPDB_XML.replaceAll('imap.example.org', 'imap.%EMAILDOMAIN%');
+    const result = await fetchIspdb('provider.net', respond(xml, 200), 'customer.org');
+    expect(result).toMatchObject({ status: 'found', settings: { imapHost: 'imap.customer.org' } });
+  });
+
   it('reports not-found on 404', async () => {
     expect(await fetchIspdb('x.org', respond('', 404))).toEqual({ status: 'not_found' });
   });
@@ -205,7 +212,10 @@ describe('resolveSrvSettings', () => {
 
 describe('discoverSettings', () => {
   const none: DiscoveryDeps = {
-    autoconfig: async () => ({ status: 'not_found' }), ispdb: async () => ({ status: 'not_found' }), srv: async () => ({ status: 'not_found' }),
+    autoconfig: async () => ({ status: 'not_found' }),
+    ispdb: async () => ({ status: 'not_found' }),
+    srv: async () => ({ status: 'not_found' }),
+    mx: async () => ({ status: 'not_found' }),
   };
   const failing: DiscoveryDeps = { ...none, ispdb: async () => ({ status: 'error' }), srv: async () => ({ status: 'error' }) };
   const hit = { imapHost: 'i', imapPort: 993, imapSecurity: 'tls', smtpHost: 's', smtpPort: 465, smtpSecurity: 'tls', autoSavesSent: false } as const;
@@ -227,6 +237,15 @@ describe('discoverSettings', () => {
     expect(await discoverSettings('Me@X.org', { ...none, autoconfig, ispdb })).toEqual(hit);
     expect(autoconfig).toHaveBeenCalledWith('Me@X.org', 'x.org');
     expect(ispdb).not.toHaveBeenCalled();
+  });
+
+  it("uses the MX provider's settings last, when the domain itself publishes none", async () => {
+    const mx = vi.fn(async () => ({ status: 'found', settings: hit }) as const);
+    expect(await discoverSettings('a@x.org', { ...none, mx })).toEqual(hit);
+    expect(mx).toHaveBeenCalledWith('a@x.org', 'x.org');
+    const srvHit = { ...hit, imapHost: 'srv' };
+    expect(await discoverSettings('a@x.org', { ...none, mx, srv: async () => ({ status: 'found', settings: srvHit }) })).toEqual(srvHit);
+    await expect(discoverSettings('a@x.org', { ...none, mx: async () => ({ status: 'error' }) })).rejects.toBeInstanceOf(DiscoveryUnavailableError);
   });
 
   it('falls back to ISPDB then SRV', async () => {
@@ -272,6 +291,28 @@ describe('discoverSettings', () => {
   });
 });
 
+describe('mxProviderDomain', () => {
+  const mx = (...records: [string, number][]) => async () => records.map(([exchange, priority]) => ({ exchange, priority }));
+
+  it("returns the preferred MX host's parent domain", async () => {
+    expect(await mxProviderDomain('customer.org', mx(['backup.other.net', 20], ['MX1.Provider.net.', 10]))).toEqual({ status: 'found', domain: 'provider.net' });
+    expect(await mxProviderDomain('x.org', mx(['provider.net', 10]))).toEqual({ status: 'found', domain: 'provider.net' });
+  });
+
+  it('reports not-found when mail is handled by the domain itself or there is no usable MX', async () => {
+    expect(await mxProviderDomain('x.org', mx(['mail.x.org', 10]))).toEqual({ status: 'not_found' });
+    expect(await mxProviderDomain('x.org', mx(['.', 0]))).toEqual({ status: 'not_found' });
+    expect(await mxProviderDomain('x.org', mx())).toEqual({ status: 'not_found' });
+    expect(await mxProviderDomain('x.org', async () => { throw dnsError('ENOTFOUND'); })).toEqual({ status: 'not_found' });
+    expect(await mxProviderDomain('x.org', async () => { throw dnsError('ENODATA'); })).toEqual({ status: 'not_found' });
+  });
+
+  it('reports an error when the DNS lookup fails', async () => {
+    expect(await mxProviderDomain('x.org', async () => { throw dnsError('ESERVFAIL'); })).toEqual({ status: 'error' });
+    expect(await mxProviderDomain('x.org', async () => { throw dnsError('ETIMEOUT'); })).toEqual({ status: 'error' });
+  });
+});
+
 describe('fetchDomainAutoconfig', () => {
   const publicLookup = vi.fn(async () => [{ address: '195.201.81.10' }]);
   const served = (pages: Record<string, string>) =>
@@ -311,6 +352,13 @@ describe('fetchDomainAutoconfig', () => {
       expect(await fetchDomainAutoconfig('a@x.org', 'x.org', { lookup, fetchConfig })).toEqual({ status: 'not_found' });
     }
     expect(fetchConfig).not.toHaveBeenCalled();
+  });
+
+  it("fills %EMAILDOMAIN% with the user's domain when reading a provider's file", async () => {
+    const xml = ISPDB_XML.replaceAll('imap.example.org', 'imap.%EMAILDOMAIN%');
+    const fetchConfig = served({ ['https://autoconfig.provider.net/mail/config-v1.1.xml']: xml });
+    const result = await fetchDomainAutoconfig('me@customer.org', 'provider.net', { lookup: publicLookup, fetchConfig });
+    expect(result).toMatchObject({ status: 'found', settings: { imapHost: 'imap.customer.org' } });
   });
 
   it('skips the address check when private hosts are allowed', async () => {
