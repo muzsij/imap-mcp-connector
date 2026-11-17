@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import type { AppDeps } from '../app.js';
 import { login, type LoginDeps } from '../auth/login.js';
 import { deleteSessionsForUser } from '../auth/session.js';
-import { expectedEmailOf, mcpUrl } from '../config.js';
+import { expectedEmailOf, MCP_LABEL_RE, mcpUrl } from '../config.js';
 import { encryptSecret } from '../crypto.js';
 import { listActiveGrants, revokeUserGrant } from '../db/oauth.js';
 import { deleteUser, serverSettingsOf, setPermissionLevel, updateSmtpSettings, type User } from '../db/users.js';
@@ -63,7 +63,8 @@ function renderSettings(deps: AppDeps, req: Request, res: Response, error: strin
     title: 'Settings',
     user,
     csrf: csrfToken(req),
-    connectorUrl: mcpUrl(deps.config).href,
+    // The mailbox's own URL lets one AI client hold a connector per mailbox (clients refuse duplicate URLs).
+    connectorUrl: mcpUrl(deps.config, MCP_LABEL_RE.test(user.email) ? user.email : undefined).href,
     grants: listActiveGrants(deps.db, user.id, Date.now()),
     levels: LEVELS,
     saved: typeof req.query.saved === 'string' ? req.query.saved : null,
