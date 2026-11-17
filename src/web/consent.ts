@@ -1,5 +1,6 @@
 import { Router, type Response } from 'express';
 import type { AppDeps } from '../app.js';
+import { expectedEmailOf } from '../config.js';
 import type { User } from '../db/users.js';
 import { csrfToken, verifyCsrf } from './csrf.js';
 import { levelLabel } from './levels.js';
@@ -22,6 +23,7 @@ export function consentRouter(deps: AppDeps): Router {
     const described = deps.provider.describePending(reqId);
     if (!described) return expired(res);
     const user = res.locals.user as User;
+    const expectedEmail = expectedEmailOf(deps.config, described.pending.resource);
     res.render('consent', {
       title: 'Approve access',
       csrf: csrfToken(req),
@@ -30,6 +32,9 @@ export function consentRouter(deps: AppDeps): Router {
       redirectHost: new URL(described.pending.redirectUri).host,
       user,
       level: levelLabel(user.permissionLevel),
+      expectedEmail,
+      wrongAccount: expectedEmail !== null && expectedEmail !== user.email.toLowerCase(),
+      next: `/consent?req=${encodeURIComponent(reqId)}`,
     });
   });
 
@@ -38,6 +43,15 @@ export function consentRouter(deps: AppDeps): Router {
     const reqId = typeof body.req === 'string' ? body.req : '';
     const user = res.locals.user as User;
     if (body.decision === 'approve') {
+      const described = deps.provider.describePending(reqId);
+      if (!described) return expired(res);
+      const expectedEmail = expectedEmailOf(deps.config, described.pending.resource);
+      if (expectedEmail !== null && expectedEmail !== user.email.toLowerCase()) {
+        return res.status(409).render('error', {
+          title: 'Wrong account',
+          message: `This connector is for ${expectedEmail}, but you are signed in as ${user.email}. Sign out and sign in with ${expectedEmail}.`,
+        });
+      }
       const url = deps.provider.approve(reqId, user.id);
       if (!url) return expired(res);
       return res.redirect(url);

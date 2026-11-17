@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import type { AppDeps } from '../app.js';
 import { login, type LoginDeps } from '../auth/login.js';
 import { deleteSessionsForUser } from '../auth/session.js';
-import { mcpUrl } from '../config.js';
+import { expectedEmailOf, mcpUrl } from '../config.js';
 import { encryptSecret } from '../crypto.js';
 import { listActiveGrants, revokeUserGrant } from '../db/oauth.js';
 import { deleteUser, serverSettingsOf, setPermissionLevel, updateSmtpSettings, type User } from '../db/users.js';
@@ -87,7 +87,16 @@ export function webRouter(deps: AppDeps): Router {
 
   router.get('/', (req, res) => res.redirect(req.session.userId ? '/settings' : '/login'));
 
-  router.get('/login', (req, res) => renderLogin(req, res, {}));
+  router.get('/login', (req, res) => {
+    // Pre-fill the mailbox a /mcp/<email> connector is being set up for.
+    let email = typeof req.query.email === 'string' ? req.query.email : undefined;
+    const next = safeNext(req.query.next, '');
+    if (!email && next.startsWith('/consent?')) {
+      const reqId = new URL(next, 'http://x').searchParams.get('req') ?? '';
+      email = expectedEmailOf(deps.config, deps.provider.describePending(reqId)?.pending.resource) ?? undefined;
+    }
+    renderLogin(req, res, { email });
+  });
 
   router.post('/login', verifyCsrf, async (req, res) => {
     const body = req.body as Body;
@@ -118,7 +127,14 @@ export function webRouter(deps: AppDeps): Router {
   });
 
   router.post('/logout', verifyCsrf, (req, res, next) => {
-    req.session.destroy((err) => (err ? next(err) : res.redirect('/login')));
+    // `next` lets the consent page switch accounts and come back to the same authorization request.
+    const body = req.body as Body;
+    const params = new URLSearchParams();
+    const after = safeNext(body.next, '');
+    if (after) params.set('next', after);
+    if (typeof body.email === 'string' && body.email) params.set('email', body.email);
+    const target = params.size ? `/login?${params}` : '/login';
+    req.session.destroy((err) => (err ? next(err) : res.redirect(target)));
   });
 
   router.get('/settings', auth, (req, res) => renderSettings(deps, req, res));

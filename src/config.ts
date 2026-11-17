@@ -80,8 +80,42 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   };
 }
 
-export function mcpUrl(config: Config): URL {
-  return new URL('/mcp', config.publicUrl);
+/**
+ * Optional suffix after /mcp, so one person can add several connectors (one per mailbox) to the same AI client,
+ * which refuses duplicate URLs. It is only a label: the OAuth token decides which account is used. When the
+ * label is an email address, the consent page insists on that account.
+ */
+export const MCP_LABEL_RE = /^[A-Za-z0-9._@+-]{1,128}$/;
+
+export function mcpUrl(config: Config, label?: string): URL {
+  return new URL(label ? `/mcp/${label}` : '/mcp', config.publicUrl);
+}
+
+/** The label of a /mcp/<label> resource URL on this server, or null. */
+export function mcpLabelOf(config: Config, resource: string | null | undefined): string | null {
+  if (!resource) return null;
+  let url: URL;
+  try {
+    url = new URL(resource);
+  } catch {
+    return null;
+  }
+  if (url.origin !== config.publicUrl.origin) return null;
+  const match = url.pathname.match(/^\/mcp\/([^/]+)\/?$/);
+  if (!match) return null;
+  let label: string;
+  try {
+    label = decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+  return MCP_LABEL_RE.test(label) ? label : null;
+}
+
+/** The mailbox a connector URL was set up for, when its label is an email address. */
+export function expectedEmailOf(config: Config, resource: string | null | undefined): string | null {
+  const label = mcpLabelOf(config, resource);
+  return label?.includes('@') ? label.toLowerCase() : null;
 }
 
 export function signInUrl(config: Config): string {

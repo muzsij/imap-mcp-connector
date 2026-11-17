@@ -34,6 +34,15 @@ Settings → Connectors → **Add custom connector** → paste `https://<your-do
 
 Settings → Connectors (turn on developer mode if your plan requires it) → **Create** → paste `https://<your-domain>/mcp` → authentication **OAuth**. Sign in and approve access when prompted.
 
+## Several mailboxes
+
+AI clients refuse to add the same URL twice, so add one connector per mailbox with the address after `/mcp`:
+
+- `https://<your-domain>/mcp/alice@example.com`
+- `https://<your-domain>/mcp/bob@example.com`
+
+Each connector signs in on its own. When the part after `/mcp/` is an email address, the sign-in form is pre-filled with it and the approval page only accepts that mailbox, so a browser still signed in to another account can't attach the wrong one ("Sign in as …" switches accounts). Any other label (letters, digits, `.`, `_`, `-`, `+`, `@`, up to 128 characters) such as `/mcp/work` also works, but is not checked against the account.
+
 ## App passwords
 
 Most big providers refuse your normal password over IMAP once two-factor sign-in is on. Create an app password and use it to sign in:

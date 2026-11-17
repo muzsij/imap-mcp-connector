@@ -1,6 +1,9 @@
 <%- include('partials/head', { title }) %>
 <h1>Allow <%= clientName %> to use your mailbox?</h1>
 <div class="card">
+  <% if (wrongAccount) { %>
+  <p class="error" role="alert">This connector was set up for <strong><%= expectedEmail %></strong>, but you are signed in as <strong><%= user.email %></strong>. Sign in with <strong><%= expectedEmail %></strong> to continue.</p>
+  <% } else { %>
   <p><strong><%= clientName %></strong> wants to access <strong><%= user.email %></strong>.</p>
   <p>After approval you'll be sent to <strong><%= redirectHost %></strong>.</p>
   <p>Current permission level: <strong><%= level %></strong>. You can change it any time in <a href="/settings">settings</a>, and revoke this app there too.</p>
@@ -9,6 +12,13 @@
     <input type="hidden" name="req" value="<%= reqId %>">
     <button type="submit" name="decision" value="approve">Approve</button>
     <button type="submit" name="decision" value="deny" class="secondary">Deny</button>
+  </form>
+  <% } %>
+  <form method="post" action="/logout">
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <input type="hidden" name="next" value="<%= next %>">
+    <% if (expectedEmail) { %><input type="hidden" name="email" value="<%= expectedEmail %>"><% } %>
+    <button type="submit" class="<%= wrongAccount ? '' : 'secondary' %>"><%= wrongAccount ? 'Sign in as ' + expectedEmail : 'Use a different account' %></button>
   </form>
 </div>
 <%- include('partials/foot') %>
