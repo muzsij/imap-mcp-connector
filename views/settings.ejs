@@ -12,7 +12,11 @@
 
 <section class="card">
   <h2>Connect an AI</h2>
-  <p>Connector URL: <code><%= connectorUrl %></code></p>
+  <label for="connector-url">Connector URL</label>
+  <div class="copy">
+    <input id="connector-url" type="text" readonly value="<%= connectorUrl %>" spellcheck="false">
+    <button type="button" class="secondary" id="copy-url" aria-live="polite">Copy</button>
+  </div>
   <p><strong>Claude:</strong> Settings → Connectors → Add custom connector → paste the URL → Connect.</p>
   <p><strong>ChatGPT:</strong> Settings → Connectors (enable developer mode if needed) → Create → paste the URL → choose OAuth.</p>
   <p class="muted">You will be asked to approve access on this server. This URL belongs to this mailbox: to connect another mailbox to the same AI, sign in here with it and add its own URL as a separate connector.</p>
@@ -73,4 +77,24 @@
     <button class="danger">Delete my account</button>
   </form>
 </section>
+<script>
+  (function () {
+    var input = document.getElementById('connector-url');
+    var button = document.getElementById('copy-url');
+    if (!input || !button) return;
+    input.addEventListener('focus', function () { input.select(); });
+    function done(ok) {
+      button.textContent = ok ? 'Copied ✓' : 'Press Ctrl+C';
+      setTimeout(function () { button.textContent = 'Copy'; }, 2000);
+    }
+    button.addEventListener('click', function () {
+      input.select();
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(input.value).then(function () { done(true); }, function () { done(document.execCommand('copy')); });
+      } else {
+        done(document.execCommand('copy'));
+      }
+    });
+  })();
+</script>
 <%- include('partials/foot') %>

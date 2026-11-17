@@ -32,7 +32,7 @@ describe('web', () => {
     const page = await agent.get('/settings');
     expect(page.status).toBe(200);
     expect(page.text).toContain('alice@x.org');
-    expect(page.text).toContain('Connector URL: <code>http://localhost:3000/mcp/alice@x.org</code>');
+    expect(page.text).toContain('id="connector-url" type="text" readonly value="http://localhost:3000/mcp/alice@x.org"');
     expect(page.text).toMatch(/value="draft"[^>]*checked/);
     expect(findUserByEmail(deps.db, 'alice@x.org')).toBeDefined();
   });

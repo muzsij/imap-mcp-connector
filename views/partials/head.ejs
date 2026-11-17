@@ -22,8 +22,11 @@
   .banner { border-left: 4px solid var(--danger); padding: 8px 12px; background: var(--card); }
   code { word-break: break-all; background: var(--bg); padding: 2px 6px; border-radius: 4px; }
   ul.grants { list-style: none; padding: 0; } ul.grants li { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--border); padding: 8px 0; }
+  .copy { display: flex; gap: 8px; margin-bottom: 16px; }
+  .copy input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
+  .copy button { margin-top: 0; white-space: nowrap; min-width: 6.5em; }
   .row { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; }
-  @media (max-width: 480px) { .row { grid-template-columns: 1fr; } }
+  @media (max-width: 480px) { .row { grid-template-columns: 1fr; } .copy { flex-direction: column; } }
 </style>
 </head>
 <body><main>
