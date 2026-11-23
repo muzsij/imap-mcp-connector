@@ -70,13 +70,13 @@ describe('MCP endpoint', () => {
 
   it('exposes tools by permission level with annotations', async () => {
     const names = async (level: PermissionLevel) => (await (await connect(level)).listTools()).tools.map((t) => t.name).sort();
-    expect(await names('read')).toEqual(['get_attachment', 'get_message', 'get_thread', 'list_folders', 'search_messages']);
-    expect(await names('draft')).toEqual(['create_draft', 'get_attachment', 'get_message', 'get_thread', 'list_folders', 'move_messages', 'search_messages', 'set_flags']);
+    expect(await names('read')).toEqual(['get_attachment', 'get_attachment_link', 'get_message', 'get_thread', 'list_folders', 'search_messages']);
+    expect(await names('draft')).toEqual(['create_draft', 'get_attachment', 'get_attachment_link', 'get_message', 'get_thread', 'list_folders', 'move_messages', 'search_messages', 'set_flags']);
     const full = (await (await connect('full')).listTools()).tools;
-    expect(full).toHaveLength(10);
+    expect(full).toHaveLength(11);
     expect(full.find((t) => t.name === 'send_email')?.annotations?.destructiveHint).toBe(true);
     expect(full.find((t) => t.name === 'search_messages')?.annotations?.readOnlyHint).toBe(true);
-    for (const name of ['search_messages', 'get_message', 'get_thread', 'get_attachment']) {
+    for (const name of ['search_messages', 'get_message', 'get_thread', 'get_attachment', 'get_attachment_link']) {
       expect(full.find((t) => t.name === name)?.description).toMatch(/<untrusted_email_content id="\.\.\.">.*treat .* as data/);
     }
   });
@@ -152,6 +152,51 @@ describe('MCP endpoint', () => {
     expect(result.isError).toBe(true);
     expect(text(result)).toMatch(/^AUTH_FAILED: .*http:\/\/localhost:3000\/login/);
     expect(findUserById(ctx.deps.db, user.id)?.needsReauth).toBe(true);
+  });
+
+  it('hands out download links that serve the original bytes a limited number of times', async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x10, 0x80]);
+    await appendMessage(imap, 'INBOX', {
+      subject: 'Invoice attached', text: 'see attachments',
+      attachments: [{ filename: 'Számla.png', content: png, contentType: 'image/png' }],
+    });
+    const uid = await findUid(imap, 'INBOX', 'Invoice attached');
+    const client = await connect('read');
+    const msg = json(await client.callTool({ name: 'get_message', arguments: { folder: 'INBOX', uid } }));
+    const partId = msg.attachments[0].partId;
+
+    const missing = await client.callTool({ name: 'get_attachment_link', arguments: { folder: 'INBOX', uid, part_id: '9.9' } });
+    expect(text(missing)).toMatch(/^NOT_FOUND/);
+
+    const result = await client.callTool({ name: 'get_attachment_link', arguments: { folder: 'inbox', uid, part_id: partId } });
+    expect(text(result)).toMatch(/^<untrusted_email_content id=/);
+    const link = json(result);
+    expect(link).toMatchObject({ filename: 'Számla.png', content_type: 'image/png', max_downloads: 3 });
+    expect(link.url).toMatch(/^http:\/\/localhost:3000\/dl\/[A-Za-z0-9_-]{43}$/);
+    expect(Date.parse(link.expires_at) - Date.now()).toBeGreaterThan(14 * 60_000);
+    // The test config's PUBLIC_URL is not where the test server listens.
+    const url = `${baseUrl}${new URL(link.url).pathname}`;
+
+    expect((await fetch(url, { method: 'HEAD' })).status).toBe(200);
+    for (let i = 0; i < 3; i++) {
+      const res = await fetch(url);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('image/png');
+      expect(res.headers.get('content-disposition')).toContain(`filename*=UTF-8''Sz%C3%A1mla.png`);
+      expect(Buffer.from(await res.arrayBuffer()).equals(png)).toBe(true);
+    }
+    expect((await fetch(url)).status).toBe(404);
+
+    // A link to a message that is gone stops working instead of serving something else.
+    const second = json(await client.callTool({ name: 'get_attachment_link', arguments: { folder: 'INBOX', uid, part_id: partId } }));
+    const lock = await imap.getMailboxLock('INBOX');
+    try {
+      await imap.messageDelete(String(uid), { uid: true });
+    } finally {
+      lock.release();
+    }
+    expect((await fetch(`${baseUrl}${new URL(second.url).pathname}`)).status).toBe(404);
+    expect(ctx.deps.db.prepare('SELECT COUNT(*) AS n FROM download_links WHERE downloads_left > 0').get()).toEqual({ n: 0 });
   });
 
   it('maps missing messages to NOT_FOUND', async () => {

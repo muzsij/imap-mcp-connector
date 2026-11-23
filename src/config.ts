@@ -121,3 +121,8 @@ export function expectedEmailOf(config: Config, resource: string | null | undefi
 export function signInUrl(config: Config): string {
   return new URL('/login', config.publicUrl).href;
 }
+
+/** Public URL of a download link; the token is the only credential, so it must never be logged. */
+export function downloadUrl(config: Config, token: string): string {
+  return new URL(`/dl/${token}`, config.publicUrl).href;
+}

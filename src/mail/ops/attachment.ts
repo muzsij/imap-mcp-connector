@@ -2,10 +2,12 @@ import type { ImapFlow } from 'imapflow';
 import { MailError } from '../errors.js';
 import { htmlToText, truncateUtf8 } from '../format.js';
 import { resolveFolder } from './folders.js';
-import { downloadPart, scanStructure } from './message.js';
+import { downloadPart, scanStructure, type AttachmentInfo, type DownloadedPart } from './message.js';
 import { extractPdfText, PdfTimeoutError } from './pdf.js';
 
 export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+/** Download links hand over the original bytes without parsing them, so they allow larger files. */
+export const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 
 export interface AttachmentContent {
   filename: string;
@@ -35,6 +37,71 @@ function decodeText(buf: Buffer, charset?: string): string {
   }
 }
 
+/** Looks up one attachment of a message; the folder must already be selected (caller holds the mailbox lock). */
+async function findAttachment(client: ImapFlow, folder: string, uid: number, partId: string): Promise<AttachmentInfo> {
+  const msg = await client.fetchOne(String(uid), { uid: true, bodyStructure: true }, { uid: true });
+  if (!msg || !msg.bodyStructure) throw new MailError('NOT_FOUND', `Message ${uid} was not found in ${folder}.`);
+  const info = scanStructure(msg.bodyStructure).attachments.find((a) => a.partId === partId);
+  if (!info) throw new MailError('NOT_FOUND', `Attachment part ${partId} was not found. Use get_message to list attachments.`);
+  return info;
+}
+
+function currentUidValidity(client: ImapFlow): string {
+  return client.mailbox ? String(client.mailbox.uidValidity) : '';
+}
+
+/** Where an attachment lives, pinned to the mailbox's UIDVALIDITY so a later download cannot hit a different message. */
+export interface AttachmentRef {
+  folder: string;
+  uid: number;
+  uidValidity: string;
+  partId: string;
+  filename: string;
+  contentType: string;
+  size: number;
+}
+
+/** Checks that an attachment exists and is small enough to download, and returns a stable reference to it. */
+export async function locateAttachment(
+  client: ImapFlow,
+  folderInput: string,
+  uid: number,
+  partId: string,
+): Promise<AttachmentRef> {
+  const folder = await resolveFolder(client, folderInput);
+  const lock = await client.getMailboxLock(folder, { readOnly: true });
+  try {
+    const info = await findAttachment(client, folder, uid, partId);
+    if (info.size > MAX_DOWNLOAD_BYTES) {
+      throw new MailError('TOO_LARGE', `Attachment is larger than the ${MAX_DOWNLOAD_BYTES / 1024 / 1024} MB download limit.`);
+    }
+    return {
+      folder, uid, uidValidity: currentUidValidity(client), partId,
+      filename: info.filename, contentType: info.contentType, size: info.size,
+    };
+  } finally {
+    lock.release();
+  }
+}
+
+/**
+ * Downloads an attachment's decoded bytes. Returns null when the folder's uids were reassigned since the reference
+ * was made (UIDVALIDITY changed); throws NOT_FOUND when the message or part is gone.
+ */
+export async function downloadAttachment(
+  client: ImapFlow,
+  ref: Pick<AttachmentRef, 'folder' | 'uid' | 'uidValidity' | 'partId'>,
+): Promise<DownloadedPart | null> {
+  const lock = await client.getMailboxLock(ref.folder, { readOnly: true });
+  try {
+    if (currentUidValidity(client) !== ref.uidValidity) return null;
+    await findAttachment(client, ref.folder, ref.uid, ref.partId);
+    return await downloadPart(client, ref.uid, ref.partId, MAX_DOWNLOAD_BYTES);
+  } finally {
+    lock.release();
+  }
+}
+
 export async function getAttachment(
   client: ImapFlow,
   folderInput: string,
@@ -44,10 +111,7 @@ export async function getAttachment(
   const folder = await resolveFolder(client, folderInput);
   const lock = await client.getMailboxLock(folder, { readOnly: true });
   try {
-    const msg = await client.fetchOne(String(uid), { uid: true, bodyStructure: true }, { uid: true });
-    if (!msg || !msg.bodyStructure) throw new MailError('NOT_FOUND', `Message ${uid} was not found in ${folder}.`);
-    const info = scanStructure(msg.bodyStructure).attachments.find((a) => a.partId === partId);
-    if (!info) throw new MailError('NOT_FOUND', `Attachment part ${partId} was not found. Use get_message to list attachments.`);
+    const info = await findAttachment(client, folder, uid, partId);
     if (info.size > MAX_ATTACHMENT_BYTES) {
       throw new MailError('TOO_LARGE', `Attachment is larger than the ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB limit.`);
     }

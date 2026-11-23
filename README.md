@@ -5,6 +5,7 @@ Use your own mailbox from **Claude** or **ChatGPT**. This is a small self-hosted
 - Works with any IMAP mailbox that accepts a password or app password: Gmail, iCloud, Yahoo, Fastmail, Zoho, most hosting providers and self-run servers.
 - One deployment serves many users, for example a company or a family.
 - Per-user permission levels: **Read only**, **Read and draft** (default), **Full access** (send and delete-to-Trash).
+- Attachments can be passed on to other tools and services (for example a ticketing system) through short-lived download links, without the file going through the AI.
 - Remote MCP server with OAuth 2.1 (dynamic client registration, PKCE), so it works as a custom connector in Claude and ChatGPT.
 
 > **Not supported yet:** Outlook.com and Microsoft 365, which no longer allow password sign-in over IMAP.
@@ -96,15 +97,21 @@ docker compose exec app node -e "const db=require('better-sqlite3')('/data/imap-
 
 | Level | Tools |
 |---|---|
-| Read only | `list_folders`, `search_messages`, `get_message`, `get_thread`, `get_attachment` |
+| Read only | `list_folders`, `search_messages`, `get_message`, `get_thread`, `get_attachment`, `get_attachment_link` |
 | Read and draft | + `set_flags`, `move_messages`, `create_draft` |
 | Full access | + `send_email`, `delete_messages` (moves to Trash, never permanent) |
 
 `get_attachment` reads attachments up to 5 MB and returns the text of plain-text, HTML and PDF files; other files are reported as binary. PDFs are parsed in a separate worker thread so a malformed or hostile file cannot stall the server: at most 15 seconds, 200 pages and 500,000 characters per file, a 256 MB memory limit, and no more than two PDFs at a time across all users. When a limit is hit, the tool's note says so (for example "Only the first 200 of 350 pages were read.").
 
+`get_attachment_link` is for moving a file somewhere else without it passing through the AI: it returns a short-lived URL (`https://<your-domain>/dl/<token>`) to the attachment's original bytes, any file type up to 25 MB. The AI hands the URL to another tool that accepts a file URL (for example an "attach file from URL" tool of another connector, whose server then fetches the file), or downloads it with `curl` in its sandbox. The AI only ever sees the URL, never the file.
+
+- Anyone holding the URL can download the file: it works for 15 minutes and at most 3 downloads (`HEAD` requests do not count), and the token is stored only as a hash.
+- The link is tied to the exact message: if the message is deleted or the folder's uids are reassigned, the link stops working rather than serving another message's attachment.
+- Files are served as downloads (`Content-Disposition: attachment`, `nosniff`, a sandboxing Content-Security-Policy, `no-store`), so a hostile attachment cannot run in a browser on this domain.
+
 ## Security model
 
-- **What is stored:** each user's email address, server settings, and mail password encrypted with AES-256-GCM using `ENCRYPTION_KEY`. OAuth codes and tokens are stored only as SHA-256 hashes.
+- **What is stored:** each user's email address, server settings, and mail password encrypted with AES-256-GCM using `ENCRYPTION_KEY`. OAuth codes and tokens, and attachment download-link tokens, are stored only as SHA-256 hashes.
 - **What is never logged:** passwords, tokens, or message content.
 - **Who can sign in:** only addresses or servers on your allowlist. Mail hosts resolving to private addresses are rejected unless `ALLOW_PRIVATE_HOSTS=true`. Connections go to the exact address that passed this check (TLS still verifies the hostname), so a second DNS answer cannot redirect them to an internal address.
 - **Auto-discovery lookups:** a domain's autoconfig file is fetched over HTTPS only, without following redirects, from public addresses only (unless `ALLOW_PRIVATE_HOSTS=true`), with a 5-second timeout and a 64 KB size limit. As with mail connections, the request goes to the address that passed the check.
@@ -117,6 +124,8 @@ docker compose exec app node -e "const db=require('better-sqlite3')('/data/imap-
 - **Plain-http `PUBLIC_URL`:** it works only for `localhost` / `127.0.0.1`, even with `NODE_ENV=development`. The MCP SDK rejects any other non-https issuer URL.
 - **Run behind exactly one reverse proxy:** the app sets Express `trust proxy` to 1, as in the provided compose file with Caddy. If you expose the app directly without a proxy, clients can spoof `X-Forwarded-For` and weaken the per-IP sign-in rate limit.
 - **Folder roles on servers without SPECIAL-USE:** roles such as `sent` or `trash` are resolved from the server's SPECIAL-USE flags, then from common English top-level folder names, then from localized top-level names (for example "Gesendet" or "Papierkorb"). If a role still does not resolve, tools that take a folder accept the exact folder path returned by `list_folders`; `create_draft`, saving to Sent after `send_email`, and `delete_messages` need the Drafts, Sent and Trash roles to resolve.
+- **Download links need the whole site behind the proxy:** `/dl/<token>` is served by the app like `/mcp`, so a proxy that forwards only selected paths must forward `/dl/` too (the provided Caddyfile forwards everything). Other services fetching these links must be able to reach `PUBLIC_URL`.
+- **Download links buffer the file:** each download reads the whole attachment (up to 25 MB) into memory before sending it, and the mail server must deliver it within the usual 30-second operation timeout.
 
 ## Development
 
@@ -139,6 +148,7 @@ Forked from [MinKyawNyunt/imap-mcp-connector](https://github.com/MinKyawNyunt/im
 - **Better auto-discovery:** besides the presets, the ISPDB and SRV records, settings are now read from the domain's own autoconfig file and, as a last step, from the mail provider named by the domain's MX record. Domains that publish their settings only this way no longer need hand-entered settings.
 - **`ALLOWED_SMTP_HOSTS`:** a separate allowlist for outgoing servers, so a user's SMTP password can only be sent to an approved server.
 - **Safer PDF attachments:** PDF text is extracted in a worker thread with time, page, size and memory limits, so a crafted PDF cannot block the server.
+- **Attachment download links:** the `get_attachment_link` tool returns a short-lived, limited-use URL to an attachment's original file (any type, up to 25 MB), so another connector or a sandbox can fetch it without the file passing through the AI.
 - **Dependency upgrades:** production dependencies with known vulnerabilities were upgraded (zod 4, html-to-text 10, newer nodemailer, mailparser, fast-xml-parser and MCP SDK); `npm audit --omit=dev` reports none. Install scripts are allowed explicitly only for better-sqlite3 and esbuild.
 - **Tested** on claude.ai and in the Claude Desktop app.
 

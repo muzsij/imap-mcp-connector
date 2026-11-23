@@ -82,4 +82,22 @@ export const migrations: string[] = [
   ALTER TABLE users ADD COLUMN settings_source TEXT NOT NULL DEFAULT 'legacy'
     CHECK (settings_source IN ('discovered','manual','legacy'));
   `,
+  // Short-lived bearer links to one attachment's bytes, so another service can fetch a file without it passing
+  // through the AI. Only the token's hash is stored; uid_validity detects a mailbox whose uids were reassigned.
+  `
+  CREATE TABLE download_links (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    folder TEXT NOT NULL,
+    uid INTEGER NOT NULL,
+    uid_validity TEXT NOT NULL,
+    part_id TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    downloads_left INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX download_links_user ON download_links(user_id);
+  `,
 ];

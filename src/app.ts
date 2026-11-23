@@ -15,6 +15,7 @@ import type { MailPool } from './mail/pool.js';
 import type { SmtpFactory } from './mail/smtp.js';
 import { mcpRouter } from './mcp/http.js';
 import { consentRouter } from './web/consent.js';
+import { downloadRouter } from './web/download.js';
 import { webRouter } from './web/routes.js';
 
 export interface AppDeps {
@@ -92,6 +93,8 @@ export function createApp(deps: AppDeps): express.Express {
   );
 
   app.use(mcpRouter(deps));
+  // Before the session middleware: download links are fetched by other services, which should not get sessions.
+  app.use(downloadRouter(deps));
 
   app.use(
     session({

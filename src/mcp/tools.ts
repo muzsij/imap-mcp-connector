@@ -2,15 +2,16 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { ImapFlow } from 'imapflow';
 import { z } from 'zod';
-import { signInUrl, type Config } from '../config.js';
+import { downloadUrl, signInUrl, type Config } from '../config.js';
 import type { Db } from '../db/index.js';
+import { createDownloadLink, DOWNLOAD_LINK_MAX_USES, DOWNLOAD_LINK_TTL_MS } from '../db/downloads.js';
 import { findUserById, type User } from '../db/users.js';
 import type { PinnedAddresses } from '../guard.js';
 import { log } from '../log.js';
 import { MailError, toMailError } from '../mail/errors.js';
 import { wrapUntrusted } from '../mail/format.js';
 import { deleteMessages, moveMessages, setFlags } from '../mail/ops/actions.js';
-import { getAttachment } from '../mail/ops/attachment.js';
+import { getAttachment, locateAttachment, MAX_DOWNLOAD_BYTES } from '../mail/ops/attachment.js';
 import { listFolders, resolveFolder, resolveRole } from '../mail/ops/folders.js';
 import { getMessage } from '../mail/ops/message.js';
 import { searchMessages } from '../mail/ops/search.js';
@@ -170,6 +171,34 @@ export function registerTools(server: McpServer, ctx: ToolContext, level: Permis
       'get_attachment',
       { title: 'Read attachment', description: `Extract text from an attachment (text, CSV, HTML, JSON, PDF). Other types return metadata only. Max 5 MB.${UNTRUSTED_NOTE}`, inputSchema: attachmentShape, annotations: READ },
       guarded<Args<typeof attachmentShape>>('get_attachment', 'read', true, (user, a) => imap(user, (c) => getAttachment(c, a.folder, a.uid, a.part_id))),
+    );
+    server.registerTool(
+      'get_attachment_link',
+      {
+        title: 'Get attachment download link',
+        description:
+          `Create a short-lived URL to an attachment's original file (any type, up to ${MAX_DOWNLOAD_BYTES / 1024 / 1024} MB), so the file can reach another tool or service without passing through the conversation: give the URL to a tool that accepts a file URL, or download it with curl in a sandbox. ` +
+          `Anyone holding the URL can download the file until it expires (${DOWNLOAD_LINK_TTL_MS / 60_000} minutes, at most ${DOWNLOAD_LINK_MAX_USES} downloads), so pass it only to the tool that needs it.${UNTRUSTED_NOTE}`,
+        inputSchema: attachmentShape,
+        annotations: READ,
+      },
+      guarded<Args<typeof attachmentShape>>('get_attachment_link', 'read', true, async (user, a) => {
+        const ref = await imap(user, (c) => locateAttachment(c, a.folder, a.uid, a.part_id));
+        const now = Date.now();
+        const expiresAt = now + DOWNLOAD_LINK_TTL_MS;
+        const token = createDownloadLink(ctx.db, {
+          userId: user.id, folder: ref.folder, uid: ref.uid, uidValidity: ref.uidValidity, partId: ref.partId,
+          filename: ref.filename, contentType: ref.contentType, maxDownloads: DOWNLOAD_LINK_MAX_USES, createdAt: now, expiresAt,
+        });
+        return {
+          url: downloadUrl(ctx.config, token),
+          filename: ref.filename,
+          content_type: ref.contentType,
+          size: ref.size,
+          expires_at: new Date(expiresAt).toISOString(),
+          max_downloads: DOWNLOAD_LINK_MAX_USES,
+        };
+      }),
     );
   }
 
