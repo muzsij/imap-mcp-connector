@@ -9,6 +9,8 @@ Use your own mailbox from **Claude** or **ChatGPT**. This is a small self-hosted
 
 > **Not supported yet:** Outlook.com and Microsoft 365, which no longer allow password sign-in over IMAP.
 
+This is a fork of [MinKyawNyunt/imap-mcp-connector](https://github.com/MinKyawNyunt/imap-mcp-connector); see [Differences from the original project](#differences-from-the-original-project).
+
 ## Quickstart (Docker Compose, ~5 minutes)
 
 1. Point a DNS name (e.g. `mail.example.com`) at your server, with ports 80 and 443 open.
@@ -28,11 +30,15 @@ Caddy obtains HTTPS certificates automatically.
 
 ## Connect to Claude
 
-Settings → Connectors → **Add custom connector** → paste `https://<your-domain>/mcp` → **Connect**. Sign in and approve access when prompted.
+Settings → Connectors → **Add custom connector** → paste the connector URL from the settings page (`https://<your-domain>/mcp/<your-email>`; plain `https://<your-domain>/mcp` also works) → **Connect**. Sign in and approve access when prompted.
+
+Tested on claude.ai and in the Claude Desktop app.
 
 ## Connect to ChatGPT
 
-Settings → Connectors (turn on developer mode if your plan requires it) → **Create** → paste `https://<your-domain>/mcp` → authentication **OAuth**. Sign in and approve access when prompted.
+Settings → Connectors (turn on developer mode if your plan requires it) → **Create** → paste the connector URL from the settings page → authentication **OAuth**. Sign in and approve access when prompted.
+
+To connect more than one mailbox, see [Several mailboxes](#several-mailboxes).
 
 ## Several mailboxes
 
@@ -94,11 +100,15 @@ docker compose exec app node -e "const db=require('better-sqlite3')('/data/imap-
 | Read and draft | + `set_flags`, `move_messages`, `create_draft` |
 | Full access | + `send_email`, `delete_messages` (moves to Trash, never permanent) |
 
+`get_attachment` reads attachments up to 5 MB and returns the text of plain-text, HTML and PDF files; other files are reported as binary. PDFs are parsed in a separate worker thread so a malformed or hostile file cannot stall the server: at most 15 seconds, 200 pages and 500,000 characters per file, a 256 MB memory limit, and no more than two PDFs at a time across all users. When a limit is hit, the tool's note says so (for example "Only the first 200 of 350 pages were read.").
+
 ## Security model
 
 - **What is stored:** each user's email address, server settings, and mail password encrypted with AES-256-GCM using `ENCRYPTION_KEY`. OAuth codes and tokens are stored only as SHA-256 hashes.
 - **What is never logged:** passwords, tokens, or message content.
 - **Who can sign in:** only addresses or servers on your allowlist. Mail hosts resolving to private addresses are rejected unless `ALLOW_PRIVATE_HOSTS=true`. Connections go to the exact address that passed this check (TLS still verifies the hostname), so a second DNS answer cannot redirect them to an internal address.
+- **Auto-discovery lookups:** a domain's autoconfig file is fetched over HTTPS only, without following redirects, from public addresses only (unless `ALLOW_PRIVATE_HOSTS=true`), with a 5-second timeout and a 64 KB size limit. As with mail connections, the request goes to the address that passed the check.
+- **Outgoing mail:** with `ALLOWED_SMTP_HOSTS` set, a user's SMTP password is only ever sent to a listed server, checked again right before each send.
 - **Prompt injection:** an email can contain text written to manipulate an AI. Email content is marked as untrusted for the model (between tags carrying a random per-response id, so an email cannot fake the end of its block), tools carry read-only/destructive hints so AI apps ask before sending, sending is rate-limited, and sending is off by default. These measures reduce the risk but cannot eliminate it. Only enable **Full access** if you accept that risk.
 - Users can revoke any connected AI app, or delete their account, from the settings page.
 
@@ -110,6 +120,8 @@ docker compose exec app node -e "const db=require('better-sqlite3')('/data/imap-
 
 ## Development
 
+Requires Node.js 24 or newer.
+
 ```bash
 npm install
 npm test                 # unit tests
@@ -118,6 +130,17 @@ npm run dev              # needs the env vars above; NODE_ENV=development allows
 ```
 
 Gmail's native thread search (`X-GM-EXT-1`) is not covered by the automated tests. Check it manually against a Gmail account before releases.
+
+## Differences from the original project
+
+Forked from [MinKyawNyunt/imap-mcp-connector](https://github.com/MinKyawNyunt/imap-mcp-connector) at commit `d9ffa03`. Changes since then:
+
+- **Several mailboxes per person:** connector URLs of the form `/mcp/<label>`, so one AI app can hold a connector for each mailbox. With an email address as the label, sign-in is pre-filled and approval is limited to that mailbox. The settings page shows each mailbox's own `/mcp/<email>` URL in a field with a Copy button.
+- **Better auto-discovery:** besides the presets, the ISPDB and SRV records, settings are now read from the domain's own autoconfig file and, as a last step, from the mail provider named by the domain's MX record. Domains that publish their settings only this way no longer need hand-entered settings.
+- **`ALLOWED_SMTP_HOSTS`:** a separate allowlist for outgoing servers, so a user's SMTP password can only be sent to an approved server.
+- **Safer PDF attachments:** PDF text is extracted in a worker thread with time, page, size and memory limits, so a crafted PDF cannot block the server.
+- **Dependency upgrades:** production dependencies with known vulnerabilities were upgraded (zod 4, html-to-text 10, newer nodemailer, mailparser, fast-xml-parser and MCP SDK); `npm audit --omit=dev` reports none. Install scripts are allowed explicitly only for better-sqlite3 and esbuild.
+- **Tested** on claude.ai and in the Claude Desktop app.
 
 ## License
 
